@@ -4,7 +4,7 @@
 
 #define PIN_MOTION 23
 #define BH1750_ADDR 0x23
-#define BH1750_VALUES 10
+#define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
 #define SECONDS_BH1750 10
 #define SECONDS_TRANSMISSION 30
 
@@ -108,6 +108,4 @@ void loop() {
         count_motion = 0;
         count_bh1750 = 0;
     }
-
-    delay(1);
 }
