@@ -6,6 +6,12 @@ use Mojolicious::Lite -signatures;
 use IO::Handle;
 use Text::CSV_XS;
 
+app->config(hypnotoad => {
+        listen => ['http://*:7009'],
+        workers => 2,
+        proxy => 1,
+    });
+
 my @sensors = qw( door lux move );
 my $csv = Text::CSV_XS->new({binary => 1, sep_char  => ';', eol => $/});
 my $filename = "$FindBin::RealBin/data.csv";
