@@ -104,6 +104,7 @@ __DATA__
                     const luxValues = [];
                     const moveValues = [];
                     const doorValues = [];
+                    let prevTime = null;
 
                     for (let i = 0; i < view.byteLength; i += 6) {
                         const time = view.getUint32(i, true);
@@ -111,8 +112,19 @@ __DATA__
                         const lux = packed & 0xFFF;
                         const move = (packed >> 12) & 0x3;
                         const door = (packed >> 14) & 0x3;
+                        const timestamp = new Date(time * 1000);
 
-                        times.push(new Date(time * 1000).toLocaleString());
+                        if (prevTime) {
+                            for (let j = Math.floor(prevTime / 60000) + 1; j < Math.floor(timestamp / 60000); j++) {
+                                times.push(new Date(j * 60000).toLocaleString('ru-RU'));
+                                luxValues.push(null);
+                                moveValues.push(null);
+                                doorValues.push(null);
+                            }
+                        }
+                        prevTime = timestamp;
+
+                        times.push(timestamp.toLocaleString('ru-RU'));
                         luxValues.push(lux);
                         moveValues.push(move);
                         doorValues.push(door);
