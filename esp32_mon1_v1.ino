@@ -1,4 +1,7 @@
+/* vim: set ts=4 sw=4 cc=119 : */
 #include <Wire.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 
 #define DEBUG
 
@@ -6,7 +9,10 @@
 #define BH1750_ADDR 0x23
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
 #define SECONDS_BH1750 10
-#define SECONDS_TRANSMISSION 30
+#define SECONDS_TRANSMISSION 60
+
+/* This should define POST_URL, WIFI_SSID and WIFI_PASS */
+#include "config.h"
 
 uint16_t count_door = 0;
 uint16_t count_motion = 0;
@@ -89,7 +95,32 @@ void setup() {
     timerAttachInterrupt(timer_bh1750_ready, &bh1750_ready_tick);
     timerAttachInterrupt(timer_transmission, &transmission_tick);
 
-    delay(3000);
+    uint16_t init_delay = 60000; // HC SR-501 takes up to 60 sec to initialize, see datasheet
+
+#ifdef DEBUG
+    Serial.print("Connecting to WiFi: %s\r\n", WIFI_SSID);
+#endif /* DEBUG */
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    while (init_delay > 0 && WiFi.status() != WL_CONNECTED) {
+        init_delay -= 500;
+        delay(500);
+    }
+
+    if (init_delay <= 0) {
+#ifdef DEBUG
+        Serial.println("Unable to establish WiFi connection. Resetting");
+#endif /* DEBUG */
+
+        ESP.restart();
+    }
+
+#ifdef DEBUG
+    Serial.println(WiFi.localIP());
+#endif /* DEBUG */
+
+    WiFi.setAutoReconnect(true);
+
+    delay(init_delay);
 
 #ifdef DEBUG
     Serial.println("Ready");
@@ -157,11 +188,85 @@ void loop() {
         Serial.printf("Transmission door=%02d motion=%02d lux=%04d\r\n", count_door, count_motion, count_bh1750);
 #endif /* DEBUG */
 
-        // Compute median lightness
+        bool internal_got = false;
+        uint16_t internal_count_door = 0;
+        uint16_t internal_count_motion = 0;
+        uint16_t internal_count_bh1750 = 0;
 
-        // Reset the data
-        count_door = 0;
-        count_motion = 0;
-        count_bh1750 = 0;
+        // TODO Compute median lightness
+
+        // WiFi could be reconnecting now
+        uint8_t retry = 1500;
+        while (retry > 0 && WiFi.status() != WL_CONNECTED) {
+            retry -= 500;
+            delay(500);
+        }
+        if (retry <= 0) {
+#ifdef DEBUG
+            Serial.println("WiFi connection is unstable. Resetting");
+#endif /* DEBUG */
+
+            ESP.restart();
+        }
+
+        NetworkClientSecure *client = new NetworkClientSecure;
+        if (! client) {
+#ifdef DEBUG
+            Serial.println("Fatal error creating NetworkClientSecure. Resetting");
+#endif /* DEBUG */
+
+            ESP.restart();
+        }
+
+        HTTPClient https;
+        if (https.begin(*client, POST_URL)) {
+            // Prepare data
+            portENTER_CRITICAL_ISR(&mux_door);
+            portENTER_CRITICAL_ISR(&mux_motion);
+            internal_count_door = count_door;
+            internal_count_motion = count_motion;
+            count_door = 0;
+            count_motion = 0;
+            portEXIT_CRITICAL_ISR(&mux_door);
+            portEXIT_CRITICAL_ISR(&mux_motion);
+            internal_count_bh1750 = count_bh1750;
+            count_bh1750 = 0;
+            internal_got = true;
+
+            uint8_t req_body[40 + 1];
+            size_t req_size = snprintf((char*)req_body, sizeof(req_body),
+                    "{\"door\":%5d,\"lux\":%5d,\"move\":%5d}",
+                    internal_count_door,
+                    internal_count_bh1750,
+                    internal_count_motion
+                    );
+
+            https.addHeader("Content-Type", "application/json");
+            int code = https.POST(req_body, req_size);
+
+            if (code != 200) {
+#ifdef DEBUG
+                String message = code < 0 ? https.errorToString(code) : String(code);
+                Serial.printf("Error sending POST: %s\r\n", message.c_str());
+#endif /* DEBUG */
+            }
+
+            https.end();
+        } else {
+#ifdef DEBUG
+            Serial.println("Error connecting the server");
+#endif /* DEBUG */
+        }
+
+        // Reset the data unless already done
+        if (! internal_got) {
+            portENTER_CRITICAL_ISR(&mux_door);
+            count_door = 0;
+            portEXIT_CRITICAL_ISR(&mux_door);
+            portENTER_CRITICAL_ISR(&mux_motion);
+            count_motion = 0;
+            portEXIT_CRITICAL_ISR(&mux_motion);
+            count_bh1750 = 0;
+        }
     }
 }
