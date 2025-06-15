@@ -136,7 +136,21 @@ __DATA__
                         doorValues.push(door);
                     }
 
-                    const maxLux = Math.max(...luxValues);
+                    if (prevTime) {
+                        for (let j = Math.floor(prevTime / 60000) + 1; j <= Math.floor(new Date() / 60000); j++) {
+                            times.push(new Date(j * 60000).toLocaleString('ru-RU'));
+                            luxValues.push(null);
+                            moveValues.push(null);
+                            doorValues.push(null);
+                        }
+                    }
+
+                    const s_times = times.slice(-n);
+                    const s_luxValues = luxValues.slice(-n);
+                    const s_moveValues = moveValues.slice(-n);
+                    const s_doorValues = doorValues.slice(-n);
+
+                    const maxLux = Math.max(...s_luxValues);
                     const maxYValue = Math.min(Math.floor(maxLux * 1.1), 4095);
 
                     const ctx = document.getElementById('myChart').getContext('2d');
@@ -146,11 +160,11 @@ __DATA__
                     myChart = new Chart(ctx, {
                         type: 'line',
                         data: {
-                            labels: times,
+                            labels: s_times,
                             datasets: [
                                 {
                                     label: 'Освещённость',
-                                    data: luxValues,
+                                    data: s_luxValues,
                                     borderColor: 'rgba(136, 191, 247, 1)',
                                     borderWidth: 0,
                                     backgroundColor: 'rgba(136, 191, 247, 1)',
@@ -159,7 +173,7 @@ __DATA__
                                 },
                                 {
                                     label: 'Движение',
-                                    data: moveValues,
+                                    data: s_moveValues,
                                     borderColor: 'rgba(0, 155, 100, 1)',
                                     backgroundColor: 'rgba(0, 155, 100, 1)',
                                     borderWidth: 0,
@@ -170,7 +184,7 @@ __DATA__
                                 },
                                 {
                                     label: 'Дверь',
-                                    data: doorValues,
+                                    data: s_doorValues,
                                     borderColor: 'rgba(255, 0, 0, 1)',
                                     backgroundColor: 'rgba(255, 0, 0, 1)',
                                     borderWidth: 0,
