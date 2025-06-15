@@ -65,6 +65,11 @@ get '/data' => sub ($c) {
     $c->render(format => 'bin', data => $packed);
 };
 
+get '/data.csv' => sub ($c) {
+    $c->res->headers->content_type('text/plain');
+    $c->reply->file($filename);
+};
+
 app->start;
 __DATA__
 
