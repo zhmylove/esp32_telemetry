@@ -98,7 +98,11 @@ __DATA__
         <canvas id="myChart"></canvas>
     </div>
     <script>
+        window.addEventListener('popstate', function(event) { location.reload(); });
+
         let myChart = null; // Declare myChart in a higher scope
+        let initial_n = new URLSearchParams(window.location.search).get("n");
+        if (initial_n) document.getElementById('n').value = initial_n;
 
         function updateChart() {
             const n = document.getElementById('n').value;
@@ -246,6 +250,11 @@ __DATA__
                     });
 
                     myChart.update();
+
+                    if (n != initial_n) {
+                        history.pushState(n, "", "/?n=" + n);
+                        initial_n = n;
+                    }
                 });
         }
 
