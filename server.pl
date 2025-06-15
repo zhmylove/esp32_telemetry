@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# vim: cc=119 :
+# vim: set cc=119 ts=4 sw=4 :
 use FindBin;
 use lib "$FindBin::RealBin/local/lib/perl5";
 use Mojolicious::Lite -signatures;
