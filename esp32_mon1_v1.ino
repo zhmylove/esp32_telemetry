@@ -3,8 +3,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-#define DEBUG
-
 #define PIN_MOTION 23
 #define BH1750_ADDR 0x23
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
@@ -24,11 +22,6 @@ hw_timer_t *timer_transmission = NULL;
 enum bh1750_state_t { SENT, READY };
 bh1750_state_t bh1750_state = READY;
 
-#ifdef DEBUG
-volatile SemaphoreHandle_t sem_door;
-volatile SemaphoreHandle_t sem_motion;
-#endif /* DEBUG */
-
 volatile SemaphoreHandle_t sem_bh1750;
 volatile SemaphoreHandle_t sem_bh1750_ready;
 volatile SemaphoreHandle_t sem_transmission;
@@ -40,20 +33,14 @@ void ARDUINO_ISR_ATTR door_rise() {
     portENTER_CRITICAL_ISR(&mux_door);
     count_door++;
     portEXIT_CRITICAL_ISR(&mux_door);
-
-#ifdef DEBUG
-    xSemaphoreGiveFromISR(sem_door, NULL);
-#endif /* DEBUG */
+    isr_log_d("Door rise: %d", count_door);
 }
 
 void ARDUINO_ISR_ATTR motion_rise() {
     portENTER_CRITICAL_ISR(&mux_motion);
     count_motion++;
     portEXIT_CRITICAL_ISR(&mux_motion);
-
-#ifdef DEBUG
-    xSemaphoreGiveFromISR(sem_motion, NULL);
-#endif /* DEBUG */
+    isr_log_d("Motion rise: %d", count_motion);
 }
 
 void ARDUINO_ISR_ATTR bh1750_tick() {
@@ -69,26 +56,19 @@ void ARDUINO_ISR_ATTR transmission_tick() {
 }
 
 void setup() {
-#ifdef DEBUG
-    Serial.begin(115200);
-    Serial.println("Starting up");
-#endif /* DEBUG */
+    log_i("Starting up");
 
     pinMode(PIN_MOTION, INPUT);
     attachInterrupt(PIN_MOTION, motion_rise, RISING);
 
     Wire.begin();
 
-#ifdef DEBUG
-    sem_door = xSemaphoreCreateBinary();
-    sem_motion = xSemaphoreCreateBinary();
-#endif /* DEBUG */
-
     sem_bh1750 = xSemaphoreCreateBinary();
     sem_bh1750_ready = xSemaphoreCreateBinary();
     sem_transmission = xSemaphoreCreateBinary();
 
     timer_bh1750 = timerBegin(1000000);
+    timer_bh1750_ready = timerBegin(1000000);
     timer_transmission = timerBegin(1000000);
 
     timerAttachInterrupt(timer_bh1750, &bh1750_tick);
@@ -97,9 +77,7 @@ void setup() {
 
     uint16_t init_delay = 60000; // HC SR-501 takes up to 60 sec to initialize, see datasheet
 
-#ifdef DEBUG
-    Serial.print("Connecting to WiFi: %s\r\n", WIFI_SSID);
-#endif /* DEBUG */
+    log_i("Connecting to WiFi: %s", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (init_delay > 0 && WiFi.status() != WL_CONNECTED) {
         init_delay -= 500;
@@ -107,36 +85,23 @@ void setup() {
     }
 
     if (init_delay <= 0) {
-#ifdef DEBUG
-        Serial.println("Unable to establish WiFi connection. Resetting");
-#endif /* DEBUG */
+        log_e("Unable to establish WiFi connection. Resetting");
 
         ESP.restart();
     }
 
-#ifdef DEBUG
-    Serial.println(WiFi.localIP());
-#endif /* DEBUG */
-
     WiFi.setAutoReconnect(true);
+    log_d("WiFi got IP: %s", WiFi.localIP().toString());
 
+    log_v("Waiting %d ms more to init BH1750", init_delay);
     delay(init_delay);
-
-#ifdef DEBUG
-    Serial.println("Ready");
-#endif /* DEBUG */
+    log_i("Ready");
 
     timerAlarm(timer_bh1750, SECONDS_BH1750 * 1000000, true, 0);
     timerAlarm(timer_transmission, SECONDS_TRANSMISSION * 1000000, true, 0);
 }
 
 void loop() {
-#ifdef DEBUG
-    if (xSemaphoreTake(sem_motion, 0) == pdTRUE) {
-        Serial.println("Motion rise");
-    }
-#endif /* DEBUG */
-
     if (xSemaphoreTake(sem_bh1750, 0) == pdTRUE) {
         if (count_bh1750 >= sizeof(data_bh1750) / sizeof(float)) {
             return;
@@ -146,9 +111,7 @@ void loop() {
             return;
         }
 
-#ifdef DEBUG
-        Serial.printf("Lux tick (%02d), asking...", count_bh1750);
-#endif /* DEBUG */
+        log_v("Lux tick (%02d), asking...", count_bh1750);
 
         Wire.beginTransmission(BH1750_ADDR);
         Wire.write(0x21);
@@ -170,23 +133,16 @@ void loop() {
 
             float lux = light_level;
             data_bh1750[count_bh1750++] = lux;
-
-#ifdef DEBUG
-            Serial.printf("...lux got: %d\r\n", lux);
-#endif /* DEBUG */
+            log_v("...lux got: %d (%d)", lux, light_level);
         } else {
-#ifdef DEBUG
-            Serial.println("Error getting lux");
-#endif /* DEBUG */
+            log_e("Error getting lux");
         }
 
         bh1750_state = READY; // ignoring any errors
     }
 
     if (xSemaphoreTake(sem_transmission, 0) == pdTRUE) {
-#ifdef DEBUG
-        Serial.printf("Transmission door=%02d motion=%02d lux=%04d\r\n", count_door, count_motion, count_bh1750);
-#endif /* DEBUG */
+        log_v("Transmission door=%d motion=%d lux_cnt=%d", count_door, count_motion, count_bh1750);
 
         bool internal_got = false;
         uint16_t internal_count_door = 0;
@@ -202,21 +158,17 @@ void loop() {
             delay(500);
         }
         if (retry <= 0) {
-#ifdef DEBUG
-            Serial.println("WiFi connection is unstable. Resetting");
-#endif /* DEBUG */
-
+            log_e("WiFi connection is unstable. Resetting");
             ESP.restart();
         }
 
         NetworkClientSecure *client = new NetworkClientSecure;
         if (! client) {
-#ifdef DEBUG
-            Serial.println("Fatal error creating NetworkClientSecure. Resetting");
-#endif /* DEBUG */
-
+            log_e("Fatal error creating NetworkClientSecure. Resetting");
             ESP.restart();
         }
+
+        client->setInsecure(); // to avoid issues whenever my rootCA is updated; MITM shall not pass
 
         HTTPClient https;
         if (https.begin(*client, POST_URL)) {
@@ -235,27 +187,26 @@ void loop() {
 
             uint8_t req_body[40 + 1];
             size_t req_size = snprintf((char*)req_body, sizeof(req_body),
-                    "{\"door\":%5d,\"lux\":%5d,\"move\":%5d}",
+                    "{\"door\":%d,\"lux\":%d,\"move\":%d}",
                     internal_count_door,
                     internal_count_bh1750,
                     internal_count_motion
                     );
 
             https.addHeader("Content-Type", "application/json");
+            log_v("POST: %s", (char*)req_body);
             int code = https.POST(req_body, req_size);
 
+#if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_ERROR
             if (code != 200) {
-#ifdef DEBUG
                 String message = code < 0 ? https.errorToString(code) : String(code);
-                Serial.printf("Error sending POST: %s\r\n", message.c_str());
-#endif /* DEBUG */
+                log_e("Error sending POST: %s", message.c_str());
             }
+#endif /* ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_ERROR */
 
             https.end();
         } else {
-#ifdef DEBUG
-            Serial.println("Error connecting the server");
-#endif /* DEBUG */
+            log_e("Error connecting the server");
         }
 
         // Reset the data unless already done
