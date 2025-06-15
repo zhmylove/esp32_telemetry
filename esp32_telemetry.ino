@@ -6,7 +6,7 @@
 #define PIN_MOTION 23
 #define BH1750_ADDR 0x23
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
-#define SECONDS_BH1750 10
+#define SECONDS_BH1750 5
 #define SECONDS_TRANSMISSION 60
 
 /* This should define POST_URL, WIFI_SSID and WIFI_PASS */
@@ -15,7 +15,7 @@
 uint16_t count_door = 0;
 uint16_t count_motion = 0;
 uint16_t count_bh1750 = 0;
-float data_bh1750[BH1750_VALUES];
+uint16_t data_bh1750[BH1750_VALUES];
 hw_timer_t *timer_bh1750 = NULL;
 hw_timer_t *timer_bh1750_ready = NULL;
 hw_timer_t *timer_transmission = NULL;
@@ -45,35 +45,29 @@ void ARDUINO_ISR_ATTR motion_rise() {
 
 void ARDUINO_ISR_ATTR bh1750_tick() {
     xSemaphoreGiveFromISR(sem_bh1750, NULL);
+    isr_log_v("bh1750");
 }
 
 void ARDUINO_ISR_ATTR bh1750_ready_tick() {
     xSemaphoreGiveFromISR(sem_bh1750_ready, NULL);
+    isr_log_v("bh1750_ready_tick");
 }
 
 void ARDUINO_ISR_ATTR transmission_tick() {
     xSemaphoreGiveFromISR(sem_transmission, NULL);
+    isr_log_v("transmission_tick");
 }
 
 void setup() {
     log_i("Starting up");
 
     pinMode(PIN_MOTION, INPUT);
-    attachInterrupt(PIN_MOTION, motion_rise, RISING);
 
     Wire.begin();
 
     sem_bh1750 = xSemaphoreCreateBinary();
     sem_bh1750_ready = xSemaphoreCreateBinary();
     sem_transmission = xSemaphoreCreateBinary();
-
-    timer_bh1750 = timerBegin(1000000);
-    timer_bh1750_ready = timerBegin(1000000);
-    timer_transmission = timerBegin(1000000);
-
-    timerAttachInterrupt(timer_bh1750, &bh1750_tick);
-    timerAttachInterrupt(timer_bh1750_ready, &bh1750_ready_tick);
-    timerAttachInterrupt(timer_transmission, &transmission_tick);
 
     uint16_t init_delay = 60000; // HC SR-501 takes up to 60 sec to initialize, see datasheet
 
@@ -95,15 +89,26 @@ void setup() {
 
     log_v("Waiting %d ms more to init BH1750", init_delay);
     delay(init_delay);
-    log_i("Ready");
+
+    log_d("Setting timers");
+    timer_bh1750 = timerBegin(1000000);
+    timer_bh1750_ready = timerBegin(1000000);
+    timer_transmission = timerBegin(1000000);
+
+    timerAttachInterrupt(timer_bh1750, &bh1750_tick);
+    timerAttachInterrupt(timer_bh1750_ready, &bh1750_ready_tick);
+    timerAttachInterrupt(timer_transmission, &transmission_tick);
 
     timerAlarm(timer_bh1750, SECONDS_BH1750 * 1000000, true, 0);
     timerAlarm(timer_transmission, SECONDS_TRANSMISSION * 1000000, true, 0);
+
+    attachInterrupt(PIN_MOTION, motion_rise, RISING);
+    log_i("Checklist completed. S.O.B");
 }
 
 void loop() {
     if (xSemaphoreTake(sem_bh1750, 0) == pdTRUE) {
-        if (count_bh1750 >= sizeof(data_bh1750) / sizeof(float)) {
+        if (count_bh1750 >= sizeof(data_bh1750) / sizeof(uint16_t)) {
             return;
         }
 
@@ -111,12 +116,13 @@ void loop() {
             return;
         }
 
-        log_v("Lux tick (%02d), asking...", count_bh1750);
+        log_v("Lux tick #%02d, asking the sensor", count_bh1750);
 
         Wire.beginTransmission(BH1750_ADDR);
         Wire.write(0x21);
         Wire.endTransmission();
         bh1750_state = SENT;
+        timerRestart(timer_bh1750_ready);
         timerAlarm(timer_bh1750_ready, 185 * 1000, false, 0); // see datasheet
     }
 
@@ -131,14 +137,13 @@ void loop() {
             light_level = Wire.read() << 8;
             light_level |= Wire.read();
 
-            float lux = light_level;
-            data_bh1750[count_bh1750++] = lux;
-            log_v("...lux got: %d (%d)", lux, light_level);
+            data_bh1750[count_bh1750++] = light_level;
+            log_v("Lux got: %d", light_level);
         } else {
             log_e("Error getting lux");
         }
 
-        bh1750_state = READY; // ignoring any errors
+        bh1750_state = READY; // despite any errors
     }
 
     if (xSemaphoreTake(sem_transmission, 0) == pdTRUE) {
@@ -147,9 +152,17 @@ void loop() {
         bool internal_got = false;
         uint16_t internal_count_door = 0;
         uint16_t internal_count_motion = 0;
-        uint16_t internal_count_bh1750 = 0;
 
-        // TODO Compute median lightness
+        // Compute median for lightness
+        uint16_t median_bh1750;
+        if (count_bh1750 == 0) {
+            median_bh1750 = 0;
+        } else if (count_bh1750 <= 2) {
+            median_bh1750 = data_bh1750[0];
+        } else {
+            std::sort(data_bh1750, data_bh1750 + count_bh1750);
+            median_bh1750 = data_bh1750[count_bh1750 / 2];
+        }
 
         // WiFi could be reconnecting now
         uint8_t retry = 1500;
@@ -181,7 +194,6 @@ void loop() {
             count_motion = 0;
             portEXIT_CRITICAL_ISR(&mux_door);
             portEXIT_CRITICAL_ISR(&mux_motion);
-            internal_count_bh1750 = count_bh1750;
             count_bh1750 = 0;
             internal_got = true;
 
@@ -189,7 +201,7 @@ void loop() {
             size_t req_size = snprintf((char*)req_body, sizeof(req_body),
                     "{\"door\":%d,\"lux\":%d,\"move\":%d}",
                     internal_count_door,
-                    internal_count_bh1750,
+                    median_bh1750,
                     internal_count_motion
                     );
 
