@@ -99,6 +99,9 @@ __DATA__
         <input type="number" id="n" name="n" min="1" max="2000000" value="2880">
         <button onclick="updateChart()">Перестроить</button>
     </div>
+    <div class="centering">
+        <label id="timestampLabel"></label>
+    </div>
     <div class="chart-container">
         <canvas id="myChart"></canvas>
     </div>
@@ -108,6 +111,12 @@ __DATA__
         let myChart = null; // Declare myChart in a higher scope
         let initial_n = new URLSearchParams(window.location.search).get("n");
         if (initial_n) document.getElementById('n').value = initial_n;
+
+        document.getElementById('n').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                updateChart();
+            }
+        });
 
         function updateChart() {
             const n = document.getElementById('n').value;
@@ -120,6 +129,7 @@ __DATA__
                     const moveValues = [];
                     const doorValues = [];
                     let prevTime = null;
+                    let latestTimestamp = null;
 
                     for (let i = 0; i < view.byteLength; i += 6) {
                         const time = view.getUint32(i, true);
@@ -138,8 +148,9 @@ __DATA__
                             }
                         }
                         prevTime = timestamp;
+                        latestTimestamp = timestamp.toLocaleString('ru-RU');
 
-                        times.push(timestamp.toLocaleString('ru-RU'));
+                        times.push(latestTimestamp);
                         luxValues.push(lux);
                         moveValues.push(move);
                         doorValues.push(door);
@@ -255,6 +266,9 @@ __DATA__
                     });
 
                     myChart.update();
+
+                    document.getElementById('timestampLabel').textContent =
+                        `Последние данные от устройства: ${latestTimestamp}`;
 
                     if (n != initial_n) {
                         history.pushState(n, "", "/?n=" + n);
