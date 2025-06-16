@@ -29,6 +29,8 @@ volatile SemaphoreHandle_t sem_transmission;
 portMUX_TYPE mux_door = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE mux_motion = portMUX_INITIALIZER_UNLOCKED;
 
+NetworkClientSecure client;
+
 void ARDUINO_ISR_ATTR door_rise() {
     portENTER_CRITICAL_ISR(&mux_door);
     count_door++;
@@ -61,7 +63,7 @@ void ARDUINO_ISR_ATTR transmission_tick() {
 void setup() {
     log_i("Starting up");
 
-    pinMode(PIN_MOTION, INPUT);
+    client.setInsecure(); // to avoid issues whenever my rootCA is updated; MITM shall not pass
 
     Wire.begin();
 
@@ -80,7 +82,6 @@ void setup() {
 
     if (init_delay <= 0) {
         log_e("Unable to establish WiFi connection. Resetting");
-
         ESP.restart();
     }
 
@@ -102,7 +103,9 @@ void setup() {
     timerAlarm(timer_bh1750, SECONDS_BH1750 * 1000000, true, 0);
     timerAlarm(timer_transmission, SECONDS_TRANSMISSION * 1000000, true, 0);
 
+    pinMode(PIN_MOTION, INPUT);
     attachInterrupt(PIN_MOTION, motion_rise, RISING);
+
     log_i("Checklist completed. S.O.B");
 }
 
@@ -175,16 +178,8 @@ void loop() {
             ESP.restart();
         }
 
-        NetworkClientSecure *client = new NetworkClientSecure;
-        if (! client) {
-            log_e("Fatal error creating NetworkClientSecure. Resetting");
-            ESP.restart();
-        }
-
-        client->setInsecure(); // to avoid issues whenever my rootCA is updated; MITM shall not pass
-
         HTTPClient https;
-        if (https.begin(*client, POST_URL)) {
+        if (https.begin(client, POST_URL)) {
             // Prepare data
             portENTER_CRITICAL_ISR(&mux_door);
             portENTER_CRITICAL_ISR(&mux_motion);
