@@ -8,6 +8,7 @@
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
 #define SECONDS_BH1750 5
 #define SECONDS_TRANSMISSION 60
+#define SECONDS_TRANSMISSION_WDT (5 * 60) // restart unless HTTP 200 got within 5 minutes
 
 /* This should define POST_URL, WIFI_SSID and WIFI_PASS */
 #include "config.h"
@@ -30,6 +31,7 @@ portMUX_TYPE mux_door = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE mux_motion = portMUX_INITIALIZER_UNLOCKED;
 
 NetworkClientSecure client;
+unsigned long last_update = 0;
 
 void ARDUINO_ISR_ATTR door_rise() {
     portENTER_CRITICAL_ISR(&mux_door);
@@ -58,6 +60,11 @@ void ARDUINO_ISR_ATTR bh1750_ready_tick() {
 void ARDUINO_ISR_ATTR transmission_tick() {
     xSemaphoreGiveFromISR(sem_transmission, NULL);
     isr_log_v("transmission_tick");
+
+    if (millis() - last_update >= SECONDS_TRANSMISSION_WDT * 1000) {
+        isr_log_e("WATCHDOG TIMEOUT! Resetting");
+        ESP.restart();
+    }
 }
 
 void setup() {
@@ -90,6 +97,8 @@ void setup() {
 
     log_v("Waiting %d ms more to init BH1750", init_delay);
     delay(init_delay);
+
+    last_update = millis();
 
     log_d("Setting timers");
     timer_bh1750 = timerBegin(1000000);
@@ -204,12 +213,14 @@ void loop() {
             log_v("POST: %s", (char*)req_body);
             int code = https.POST(req_body, req_size);
 
+            if (code == 200) {
+                last_update = millis();
+            } else {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_ERROR
-            if (code != 200) {
                 String message = code < 0 ? https.errorToString(code) : String(code);
                 log_e("Error sending POST: %s", message.c_str());
-            }
 #endif /* ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_ERROR */
+            }
 
             https.end();
         } else {
