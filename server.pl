@@ -181,7 +181,7 @@ __DATA__
                     const s_doorValues = doorValues.slice(-n);
 
                     const maxLux = Math.max(...s_luxValues);
-                    const maxYValue = Math.min(Math.floor(maxLux * 1.1), 4095);
+                    const maxYValue = Math.min(Math.ceil(maxLux * 1.1), 4095);
 
                     const ctx = document.getElementById('myChart').getContext('2d');
                     if (myChart) {
