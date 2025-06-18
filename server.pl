@@ -91,6 +91,11 @@ __DATA__
             display: block;
             width: fit-content;
         }
+        #timestampLabel {
+            white-space: pre-wrap;
+            text-align: right;
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -130,6 +135,8 @@ __DATA__
                     const doorValues = [];
                     let prevTime = null;
                     let latestTimestamp = null;
+                    let latestDoor = null;
+                    let latestMove = null;
 
                     for (let i = 0; i < view.byteLength; i += 6) {
                         const time = view.getUint32(i, true);
@@ -154,6 +161,9 @@ __DATA__
                         luxValues.push(lux);
                         moveValues.push(move);
                         doorValues.push(door);
+
+                        if (door > 0) { latestDoor = latestTimestamp; }
+                        if (move > 0) { latestMove = latestTimestamp; }
                     }
 
                     if (prevTime) {
@@ -268,7 +278,9 @@ __DATA__
                     myChart.update();
 
                     document.getElementById('timestampLabel').textContent =
-                        `Последние данные от устройства: ${latestTimestamp}`;
+                        `Последние данные от устройства: ${latestTimestamp}
+                         Дверь: ${latestDoor}
+                         Движение: ${latestMove}`;
 
                     if (n != initial_n) {
                         history.pushState(n, "", "/?n=" + n);
