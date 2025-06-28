@@ -3,18 +3,30 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-#define PIN_MOTION 23
+#define PIN_MOTION 12
+#define PIN_MOTION_2 13
 #define BH1750_ADDR 0x23
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
 #define SECONDS_BH1750 5
 #define SECONDS_TRANSMISSION 60
 #define SECONDS_TRANSMISSION_WDT (5 * 60) // restart unless HTTP 200 got within 5 minutes
 
+#define SINGLE_MOTION
+#ifdef SINGLE_MOTION
+#define MOTION_VALUE (internal_count_motion)
+#define (count_motion_2) (count_motion)
+#else /* ! SINGLE_MOTION */
+#define MOTION_VALUE (std::min(internal_count_motion, internal_count_motion_2))
+#endif /* SINGLE_MOTION */
+
 /* This should define POST_URL, WIFI_SSID and WIFI_PASS */
 #include "config.h"
 
 uint16_t count_door = 0;
 uint16_t count_motion = 0;
+#ifndef SINGLE_MOTION
+uint16_t count_motion_2 = 0;
+#endif /* SINGLE_MOTION */
 uint16_t count_bh1750 = 0;
 uint16_t data_bh1750[BH1750_VALUES];
 hw_timer_t *timer_bh1750 = NULL;
@@ -29,6 +41,9 @@ volatile SemaphoreHandle_t sem_transmission;
 
 portMUX_TYPE mux_door = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE mux_motion = portMUX_INITIALIZER_UNLOCKED;
+#ifndef SINGLE_MOTION
+portMUX_TYPE mux_motion_2 = portMUX_INITIALIZER_UNLOCKED;
+#endif /* SINGLE_MOTION */
 
 NetworkClientSecure client;
 unsigned long last_update = 0;
@@ -46,6 +61,15 @@ void ARDUINO_ISR_ATTR motion_rise() {
     portEXIT_CRITICAL_ISR(&mux_motion);
     isr_log_d("Motion rise: %d", count_motion);
 }
+
+#ifndef SINGLE_MOTION
+void ARDUINO_ISR_ATTR motion_2_rise() {
+    portENTER_CRITICAL_ISR(&mux_motion_2);
+    count_motion_2++;
+    portEXIT_CRITICAL_ISR(&mux_motion_2);
+    isr_log_d("Motion 2 rise: %d", count_motion_2);
+}
+#endif /* SINGLE_MOTION */
 
 void ARDUINO_ISR_ATTR bh1750_tick() {
     xSemaphoreGiveFromISR(sem_bh1750, NULL);
@@ -115,6 +139,11 @@ void setup() {
     pinMode(PIN_MOTION, INPUT);
     attachInterrupt(PIN_MOTION, motion_rise, RISING);
 
+#ifndef SINGLE_MOTION
+    pinMode(PIN_MOTION_2, INPUT);
+    attachInterrupt(PIN_MOTION_2, motion_2_rise, RISING);
+#endif /* SINGLE_MOTION */
+
     log_i("Checklist completed. S.O.B");
 }
 
@@ -159,11 +188,12 @@ void loop() {
     }
 
     if (xSemaphoreTake(sem_transmission, 0) == pdTRUE) {
-        log_v("Transmission door=%d motion=%d lux_cnt=%d", count_door, count_motion, count_bh1750);
+        log_v("Transmission door=%d move=%d move2=%d lux=%d", count_door, count_motion, count_motion_2, count_bh1750);
 
         bool internal_got = false;
         uint16_t internal_count_door = 0;
         uint16_t internal_count_motion = 0;
+        uint16_t internal_count_motion_2 = 0;
 
         // Compute median for lightness
         uint16_t median_bh1750;
@@ -192,12 +222,22 @@ void loop() {
             // Prepare data
             portENTER_CRITICAL_ISR(&mux_door);
             portENTER_CRITICAL_ISR(&mux_motion);
+#ifndef SINGLE_MOTION
+            portENTER_CRITICAL_ISR(&mux_motion_2);
+#endif /* SINGLE_MOTION */
             internal_count_door = count_door;
             internal_count_motion = count_motion;
+#ifndef SINGLE_MOTION
+            internal_count_motion_2 = count_motion_2;
+            count_motion_2 = 0;
+#endif /* SINGLE_MOTION */
             count_door = 0;
             count_motion = 0;
             portEXIT_CRITICAL_ISR(&mux_door);
             portEXIT_CRITICAL_ISR(&mux_motion);
+#ifndef SINGLE_MOTION
+            portEXIT_CRITICAL_ISR(&mux_motion_2);
+#endif /* SINGLE_MOTION */
             count_bh1750 = 0;
             internal_got = true;
 
@@ -206,7 +246,7 @@ void loop() {
                     "{\"door\":%d,\"lux\":%d,\"move\":%d}",
                     internal_count_door,
                     median_bh1750,
-                    internal_count_motion
+                    MOTION_VALUE
                     );
 
             https.addHeader("Content-Type", "application/json");
@@ -235,6 +275,11 @@ void loop() {
             portENTER_CRITICAL_ISR(&mux_motion);
             count_motion = 0;
             portEXIT_CRITICAL_ISR(&mux_motion);
+#ifndef SINGLE_MOTION
+            portENTER_CRITICAL_ISR(&mux_motion_2);
+            count_motion_2 = 0;
+            portEXIT_CRITICAL_ISR(&mux_motion_2);
+#endif /* SINGLE_MOTION */
             count_bh1750 = 0;
         }
     }

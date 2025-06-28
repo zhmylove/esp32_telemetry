@@ -92,7 +92,7 @@ __DATA__
             width: fit-content;
         }
         #timestampLabel {
-            white-space: pre-wrap;
+            white-space: pre;
             text-align: right;
             display: inline-block;
         }
