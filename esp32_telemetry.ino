@@ -3,8 +3,9 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-#define PIN_MOTION 12
-#define PIN_MOTION_2 13
+#define PIN_MOTION 13
+#define PIN_MOTION_2 12
+#define PIN_DOOR 27
 #define BH1750_ADDR 0x23
 #define BH1750_VALUES ((uint16_t)((SECONDS_TRANSMISSION / SECONDS_BH1750) + 2))
 #define SECONDS_BH1750 5
@@ -14,7 +15,7 @@
 #define SINGLE_MOTION
 #ifdef SINGLE_MOTION
 #define MOTION_VALUE (internal_count_motion)
-#define (count_motion_2) (count_motion)
+#define count_motion_2 (count_motion)
 #else /* ! SINGLE_MOTION */
 #define MOTION_VALUE (std::min(internal_count_motion, internal_count_motion_2))
 #endif /* SINGLE_MOTION */
@@ -48,11 +49,11 @@ portMUX_TYPE mux_motion_2 = portMUX_INITIALIZER_UNLOCKED;
 NetworkClientSecure client;
 unsigned long last_update = 0;
 
-void ARDUINO_ISR_ATTR door_rise() {
+void ARDUINO_ISR_ATTR door_fall() {
     portENTER_CRITICAL_ISR(&mux_door);
     count_door++;
     portEXIT_CRITICAL_ISR(&mux_door);
-    isr_log_d("Door rise: %d", count_door);
+    isr_log_d("Door fall: %d", count_door);
 }
 
 void ARDUINO_ISR_ATTR motion_rise() {
@@ -135,6 +136,9 @@ void setup() {
 
     timerAlarm(timer_bh1750, SECONDS_BH1750 * 1000000, true, 0);
     timerAlarm(timer_transmission, SECONDS_TRANSMISSION * 1000000, true, 0);
+
+    pinMode(PIN_DOOR, INPUT);
+    attachInterrupt(PIN_DOOR, door_fall, FALLING);
 
     pinMode(PIN_MOTION, INPUT);
     attachInterrupt(PIN_MOTION, motion_rise, RISING);
@@ -283,4 +287,7 @@ void loop() {
             count_bh1750 = 0;
         }
     }
+
+    // give it some rest
+    delay(10);
 }
