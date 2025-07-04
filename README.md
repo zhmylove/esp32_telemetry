@@ -15,3 +15,7 @@ A little ESP32 based telemetry service.
     ```
 2. Compile and flash the `esp32_telemetry.ino` into a ESP32, and connect the sensors.
 3. Run `server.pl`
+
+# Connection scheme
+
+![Connection scheme](scheme.svg)
